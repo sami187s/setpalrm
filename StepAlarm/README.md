@@ -31,10 +31,14 @@ these files in.
    - `AlarmMetadata.swift`
    - `StopIntent.swift`
    - `LiveActivityController.swift`
-4. Add the required permission string: target → **Info** tab → add row
-   `NSAlarmKitUsageDescription` → value e.g. "Step Alarm needs alarm access
-   to wake you up." (Key name should be verified in Xcode's autocomplete —
-   it may suggest the exact key if you start typing "Alarm".)
+   - `Theme.swift`, `AlarmStore.swift`, `WalkSession.swift`,
+     `WakeUpView.swift`, `AddAlarmView.swift`
+4. Add the required permission strings: target → **Info** tab:
+   - `NSAlarmKitUsageDescription` → e.g. "Step Alarm needs alarm access
+     to wake you up." (Key name should be verified in Xcode's autocomplete —
+     it may suggest the exact key if you start typing "Alarm".)
+   - `NSMotionUsageDescription` → e.g. "Step Alarm counts your steps to turn
+     the alarm off." (needed for the pedometer)
 5. **Signing & Capabilities** tab → select your existing Apple Developer
    team. Do not create a new identifier — use what's already provisioned.
 6. Build target: your physical iPhone (not simulator — AlarmKit and
@@ -156,3 +160,31 @@ custom content to, or whether (as built here) it's a fully independent
 Live Activity that merely happens to fire alongside the alarm. Test B is
 designed to surface that difference empirically, because I can't verify
 it by reading documentation alone.
+
+## How the app works now (walk to dismiss)
+
+1. **+** adds an alarm: time, steps to dismiss (1–30), repeat days. Alarms are
+   saved; the toggle schedules/cancels the real AlarmKit alarm; tap a row to
+   edit; **Edit** shows delete buttons.
+2. When it rings, the system alert has **Stop** and **Walk**.
+   - **Walk** opens the app on the Wake Up screen. Real steps are counted
+     (CMPedometer); reaching the goal silences the alarm.
+   - **Stop** silences it, but it **rings again 20 seconds later** until the
+     steps are done.
+   - **Emergency Stop** (on the Wake Up screen) silences everything.
+3. If the app is opened while an alarm is ringing, it jumps straight to the
+   Wake Up screen.
+
+### Quick test plan (real iPhone)
+
+1. Tests → "Try the Wake Up screen" — steps count up by themselves, the alarm
+   closes at 15. Emergency Stop closes it early.
+2. Tests → "Ring a 15-step alarm in 15 seconds", lock the phone.
+3. When it rings: tap **Stop** → it should ring again after ~20s.
+4. Tap **Walk**, walk 15 steps → alarm stops, screen says "You're up!".
+5. Repeat and tap **Emergency Stop** instead — alarm stops, no re-ring.
+6. Add a real alarm 2 minutes ahead with 10 steps and repeat days; toggle it
+   off/on; delete it with Edit.
+
+Not built: the Lock Screen Live Activity is still only the Test A/B demo —
+it does not show your real step count during an alarm.

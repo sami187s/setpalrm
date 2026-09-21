@@ -14,15 +14,18 @@ import SwiftUI
 struct StepAlarmWidgetLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: StepAlarmActivityAttributes.self) { context in
-            VStack(spacing: 8) {
-                Text("WALK TO STOP")
-                    .font(.caption.bold())
+            VStack(spacing: 6) {
+                Text("Wake Up!")
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(Color(red: 0.937, green: 0.325, blue: 0.290)) // #EF534A
+                Text("\(context.state.stepCount)")
+                    .font(.system(size: 52, weight: .regular))
                     .foregroundStyle(.white)
-                Text("\(context.state.stepCount) / \(context.state.stepGoal)")
-                    .font(.system(size: 44, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Color(red: 1, green: 0.231, blue: 0.188)) // #FF3B30
+                Text("of \(context.state.stepGoal) steps")
+                    .font(.footnote)
+                    .foregroundStyle(Color(white: 0.8))
                 ProgressView(value: Double(context.state.stepCount), total: Double(context.state.stepGoal))
-                    .tint(Color(red: 1, green: 0.231, blue: 0.188))
+                    .tint(Color(red: 0.937, green: 0.325, blue: 0.290))
             }
             .padding()
             .activityBackgroundTint(.black)
