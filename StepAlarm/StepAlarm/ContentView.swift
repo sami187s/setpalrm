@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// Home screen styled like the iOS Clock "Alarms" list: Edit / title / +
-/// header, big times with small AM/PM, green toggles. Everything here is
-/// live: toggles schedule/cancel real alarms, rows open the editor, Edit
-/// deletes, and the walk screen appears when an alarm is being dismissed.
+/// Home screen styled like the iOS Clock "Alarms" list: Edit / title / icons
+/// header, big times with small AM/PM, green toggles. Kept clean on purpose —
+/// the developer test buttons live behind a long-press on the "Alarms" title.
 struct ContentView: View {
     private var scheduler = AlarmScheduler.shared
-    private var liveActivity = LiveActivityController.shared
     private var store = AlarmStore.shared
     private var session = WalkSession.shared
 
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showPaywall = false
+    @State private var showTests = false
     @State private var isEditing = false
     @State private var sheetAlarm: AlarmItem?
 
@@ -21,36 +21,18 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if !scheduler.isAuthorized {
-                        note("Alarm permission not granted — enable it in Settings > StepAlarm.", isError: true)
+                        note("Alarm permission is off. Enable it in Settings.", isError: true)
                     }
                     if let error = scheduler.lastError { note(error, isError: true) }
 
                     sectionTitle("Other")
                     if store.alarms.isEmpty {
-                        note("No alarms yet. Tap + to add one.")
+                        note("No alarms yet")
                     }
                     ForEach(store.alarms) { alarm in
                         alarmRow(alarm)
                         Divider().overlay(Theme.surface)
                     }
-
-                    sectionTitle("Tests").padding(.top, 32)
-                    if let error = liveActivity.lastError { note(error, isError: true) }
-                    note(liveActivity.statusMessage)
-
-                    testButton("Try the Wake Up screen (simulated steps)") { session.beginDemo() }
-                    testButton("Ring a 15-step alarm in 15 seconds") {
-                        Task { await scheduler.scheduleTestAlarm(secondsFromNow: 15) }
-                    }
-                    testButton("Test A: Lock Screen counter (30s)") {
-                        liveActivity.startCounterOnlyTest(stepGoal: 15, durationSeconds: 30)
-                    }
-                    testButton("Test B: alarm + Lock Screen counter") {
-                        Task {
-                            await liveActivity.startCombinedWithAlarmTest(stepGoal: 15, alarmSecondsFromNow: 30)
-                        }
-                    }
-                    testButton("End test") { liveActivity.endTest() }
                 }
                 .padding(.horizontal, 16)
             }
@@ -69,10 +51,27 @@ struct ContentView: View {
             )
             .presentationDetents([.large])
         }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView { showPaywall = false }
+        }
+        .sheet(isPresented: $showTests) {
+            TestsSheet(
+                onClose: { showTests = false },
+                onDemo: {
+                    showTests = false
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        session.beginDemo()
+                    }
+                }
+            )
+            .presentationDetents([.medium])
+        }
         .fullScreenCover(isPresented: Binding(get: { session.isActive }, set: { _ in })) {
             WakeUpScreen()
         }
         .task {
+            await SubscriptionStore.shared.start()
             await scheduler.requestAuthorizationIfNeeded()
             session.requestMotionPermission()
             await refresh()
@@ -100,15 +99,25 @@ struct ContentView: View {
             Text("Alarms")
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 24)
+                .contentShape(Rectangle())
+                .onLongPressGesture { showTests = true }
             HStack {
                 Button(isEditing ? "Done" : "Edit") { isEditing.toggle() }
                     .font(.body.weight(.medium))
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
-                Button { sheetAlarm = .new() } label: {
-                    Image(systemName: "plus")
-                        .font(.title2)
-                        .foregroundStyle(Theme.textPrimary)
+                HStack(spacing: 20) {
+                    Button { showPaywall = true } label: {
+                        Image(systemName: SubscriptionStore.shared.isPro ? "checkmark.seal.fill" : "sparkles")
+                            .font(.title3)
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                    Button { sheetAlarm = .new() } label: {
+                        Image(systemName: "plus")
+                            .font(.title2)
+                            .foregroundStyle(Theme.textPrimary)
+                    }
                 }
             }
         }
@@ -171,13 +180,62 @@ struct ContentView: View {
             .foregroundStyle(isError ? Theme.accent : Color(white: 0.6))
             .padding(.vertical, 4)
     }
+}
 
-    private func testButton(_ title: String, action: @escaping () -> Void) -> some View {
+/// Developer test tools (long-press the "Alarms" title to open).
+private struct TestsSheet: View {
+    var onClose: () -> Void
+    var onDemo: () -> Void
+
+    private var scheduler = AlarmScheduler.shared
+    private var liveActivity = LiveActivityController.shared
+
+    init(onClose: @escaping () -> Void, onDemo: @escaping () -> Void) {
+        self.onClose = onClose
+        self.onDemo = onDemo
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Test tools")
+                .font(.headline)
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.bottom, 8)
+
+            row("Try the Wake Up screen (simulated steps)", "figure.walk", onDemo)
+            row("Ring a 15-step alarm in 15 seconds", "alarm") {
+                Task { await scheduler.scheduleTestAlarm(secondsFromNow: 15) }
+                onClose()
+            }
+            row("Lock Screen counter (30s)", "lock") {
+                liveActivity.startCounterOnlyTest(stepGoal: 15, durationSeconds: 30)
+            }
+            row("Alarm + Lock Screen counter", "lock.badge.clock") {
+                Task {
+                    await liveActivity.startCombinedWithAlarmTest(stepGoal: 15, alarmSecondsFromNow: 30)
+                }
+            }
+            row("End test", "xmark.circle") { liveActivity.endTest() }
+
+            Text(liveActivity.lastError ?? liveActivity.statusMessage)
+                .font(.caption)
+                .foregroundStyle(Color(white: 0.55))
+                .padding(.top, 8)
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+    }
+
+    private func row(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
-                .font(.body)
-                .foregroundStyle(Theme.accent)
-                .padding(.vertical, 10)
+            Label(title, systemImage: icon)
+                .font(.subheadline)
+                .foregroundStyle(Theme.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 9)
         }
     }
 }

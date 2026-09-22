@@ -134,19 +134,6 @@ final class WalkSession {
         }
     }
 
-    /// Escape hatch: silence everything without walking.
-    func emergencyStop() {
-        let id = alarmID
-        let demo = isDemo
-        stopCounting()
-        close()
-        guard !demo else { return }
-        Task {
-            if let id { await AlarmScheduler.shared.stopAlarm(id) }
-            await AlarmScheduler.shared.cancelReRings()
-        }
-    }
-
     private func stopCounting() {
         pedometer.stopUpdates()
         demoTask?.cancel()

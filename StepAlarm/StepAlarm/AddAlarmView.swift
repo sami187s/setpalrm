@@ -13,8 +13,8 @@ struct AddAlarmView: View {
     @State private var days: Set<Int>   // 0 = Sunday … 6 = Saturday
 
     private static let dayLetters = ["S", "M", "T", "W", "T", "F", "S"]
-    private let card = Color(white: 0.16)
-    private let chip = Color(white: 0.22)
+    private let card = Theme.surface
+    private let chip = Color(white: 0.24)
 
     init(alarm: AlarmItem, title: String,
          onCancel: @escaping () -> Void, onSave: @escaping (AlarmItem) -> Void) {
@@ -49,7 +49,7 @@ struct AddAlarmView: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 16)
-        .background(Color(white: 0.11).ignoresSafeArea())
+        .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
     }
 

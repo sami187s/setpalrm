@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Presentational "Wake Up!" screen: clock, step-progress circle, walking
-/// prompt and an Emergency Stop button.
+/// Presentational "Wake Up!" screen: clock, step-progress circle and walking prompt.
 struct WakeUpView: View {
     var now: Date = .now
     var stepCount: Int
@@ -9,7 +8,6 @@ struct WakeUpView: View {
     var isMoving: Bool = false
     var title: String = "Wake Up!"
     var message: String? = nil
-    var onEmergencyStop: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,18 +66,7 @@ struct WakeUpView: View {
 
             Spacer()
 
-            Button(action: onEmergencyStop) {
-                Label("Emergency Stop", systemImage: "stop.circle")
-                    .font(.headline)
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 16)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20)
-                            .stroke(Theme.accent, lineWidth: 2)
-                    )
-            }
-            .padding(.bottom, 24)
+            Spacer().frame(height: 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background.ignoresSafeArea())
@@ -100,8 +87,7 @@ struct WakeUpScreen: View {
                 stepGoal: session.goal,
                 isMoving: session.lastStepDate.map { context.date.timeIntervalSince($0) < 3 } ?? false,
                 title: session.isComplete ? "You're up!" : "Wake Up!",
-                message: session.motionMessage,
-                onEmergencyStop: { session.emergencyStop() }
+                message: session.motionMessage
             )
         }
     }

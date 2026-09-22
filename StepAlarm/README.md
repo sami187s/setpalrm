@@ -171,19 +171,17 @@ it by reading documentation alone.
      (CMPedometer); reaching the goal silences the alarm.
    - **Stop** silences it, but it **rings again 20 seconds later** until the
      steps are done.
-   - **Emergency Stop** (on the Wake Up screen) silences everything.
 3. If the app is opened while an alarm is ringing, it jumps straight to the
    Wake Up screen.
 
 ### Quick test plan (real iPhone)
 
 1. Tests → "Try the Wake Up screen" — steps count up by themselves, the alarm
-   closes at 15. Emergency Stop closes it early.
+   closes at 15.
 2. Tests → "Ring a 15-step alarm in 15 seconds", lock the phone.
 3. When it rings: tap **Stop** → it should ring again after ~20s.
 4. Tap **Walk**, walk 15 steps → alarm stops, screen says "You're up!".
-5. Repeat and tap **Emergency Stop** instead — alarm stops, no re-ring.
-6. Add a real alarm 2 minutes ahead with 10 steps and repeat days; toggle it
+5. Add a real alarm 2 minutes ahead with 10 steps and repeat days; toggle it
    off/on; delete it with Edit.
 
 Not built: the Lock Screen Live Activity is still only the Test A/B demo —

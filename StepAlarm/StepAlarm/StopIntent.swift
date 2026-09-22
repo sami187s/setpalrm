@@ -4,8 +4,8 @@ import AlarmKit
 /// Runs in-process (no UI) when the alarm's system Stop button is tapped.
 /// Stopping without walking isn't allowed to "win": the alarm is silenced
 /// now and rings again after `AlarmScheduler.reRingDelay` seconds. Walking
-/// the steps (or Emergency Stop in the app) is what really ends it — both
-/// silence the alarm directly and never go through this intent.
+/// the steps is what really ends it — it
+/// silences the alarm directly and never goes through this intent.
 ///
 /// NOTE: exact protocol requirements for AlarmKit's button intents
 /// (`LiveActivityIntent`) come from Apple's WWDC25 AlarmKit session and
