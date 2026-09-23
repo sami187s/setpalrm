@@ -1,44 +1,92 @@
 import SwiftUI
 
-/// Home screen styled like the iOS Clock "Alarms" list: Edit / title / icons
-/// header, big times with small AM/PM, green toggles. Kept clean on purpose —
-/// the developer test buttons live behind a long-press on the "Alarms" title.
+/// Home screen: native large-title list (like Clock's Alarms tab), a
+/// "next alarm in…" card, icon-labelled rows, and real swipe-to-delete.
+/// The developer test tools still live behind a long-press on the gear icon.
 struct ContentView: View {
     private var scheduler = AlarmScheduler.shared
     private var store = AlarmStore.shared
     private var session = WalkSession.shared
+    private var settings = AppSettings.shared
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var showPaywall = false
+    @State private var showSettings = false
     @State private var showTests = false
-    @State private var isEditing = false
     @State private var sheetAlarm: AlarmItem?
+    @State private var toastMessage: ToastMessage?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if !scheduler.isAuthorized {
-                        note("Alarm permission is off. Enable it in Settings.", isError: true)
+        NavigationStack {
+            List {
+                if !scheduler.isAuthorized {
+                    Section { note("Alarm permission is off. Enable it in Settings.", isError: true) }
+                }
+                if let error = scheduler.lastError {
+                    Section { note(error, isError: true) }
+                }
+                if let text = store.nextAlarmDescription {
+                    Section {
+                        nextAlarmCard(text)
                     }
-                    if let error = scheduler.lastError { note(error, isError: true) }
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                }
 
-                    sectionTitle("Other")
-                    if store.alarms.isEmpty {
-                        note("No alarms yet")
-                    }
-                    ForEach(store.alarms) { alarm in
-                        alarmRow(alarm)
-                        Divider().overlay(Theme.surface)
+                if store.alarms.isEmpty {
+                    Section { emptyState }
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                } else {
+                    Section {
+                        ForEach(store.alarms) { alarm in
+                            alarmRow(alarm)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        Task { await store.delete(alarm.id) }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                        }
                     }
                 }
-                .padding(.horizontal, 16)
+            }
+            .listStyle(.plain)
+            .animation(.spring(duration: 0.35, bounce: 0.2), value: store.alarms)
+            .navigationTitle("Alarms")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    HStack(spacing: Theme.Spacing.md) {
+                        if !SubscriptionStore.shared.isPro {
+                            Button { showPaywall = true } label: {
+                                Label("Pro", systemImage: "crown.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                            .buttonStyle(.pressable)
+                            .accessibilityLabel("Upgrade to Pro")
+                        }
+                        Button { showSettings = true } label: {
+                            Image(systemName: "gearshape")
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        .buttonStyle(.pressable)
+                        .accessibilityLabel("Settings")
+                        .onLongPressGesture(minimumDuration: 0.6) { showTests = true }
+                        Button(action: addAlarm) {
+                            Image(systemName: "plus")
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        .buttonStyle(.pressable)
+                        .accessibilityLabel("Add alarm")
+                    }
+                }
             }
         }
-        .background(Theme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
+        .toast($toastMessage)
         .sheet(item: $sheetAlarm) { alarm in
             AddAlarmView(
                 alarm: alarm,
@@ -46,13 +94,29 @@ struct ContentView: View {
                 onCancel: { sheetAlarm = nil },
                 onSave: { saved in
                     sheetAlarm = nil
-                    Task { await store.upsert(saved) }
+                    let isFirstEver = !settings.hasSavedFirstAlarm
+                    settings.hasSavedFirstAlarm = true
+                    Task {
+                        await store.upsert(saved)
+                        if let next = saved.nextRingDate() {
+                            toastMessage = ToastMessage(text: "Alarm set for " + AlarmItem.countdownText(to: next))
+                        }
+                    }
+                    // The one moment the paywall is allowed to appear
+                    // unprompted — right after the very first alarm ever
+                    // created, never before it.
+                    if isFirstEver && !SubscriptionStore.shared.isPro {
+                        showPaywall = true
+                    }
                 }
             )
             .presentationDetents([.large])
         }
         .sheet(isPresented: $showPaywall) {
             PaywallView { showPaywall = false }
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(onClose: { showSettings = false }, onShowPaywall: { showPaywall = true })
         }
         .sheet(isPresented: $showTests) {
             TestsSheet(
@@ -70,10 +134,17 @@ struct ContentView: View {
         .fullScreenCover(isPresented: Binding(get: { session.isActive }, set: { _ in })) {
             WakeUpScreen()
         }
+        .fullScreenCover(isPresented: Binding(get: { !settings.hasCompletedOnboarding }, set: { _ in })) {
+            OnboardingFlow()
+        }
         .task {
             await SubscriptionStore.shared.start()
-            await scheduler.requestAuthorizationIfNeeded()
-            session.requestMotionPermission()
+            // Onboarding owns the first-run permission requests (with its
+            // own explanation screens); only re-prime here on later launches.
+            if settings.hasCompletedOnboarding {
+                await scheduler.requestAuthorizationIfNeeded()
+                session.requestMotionPermission()
+            }
             await refresh()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -86,103 +157,134 @@ struct ContentView: View {
         }
     }
 
-    /// Sync the list with AlarmKit and jump to the walk screen if an alarm is ringing.
+    /// Sync the list with AlarmKit, downgrade any repeats if Pro has lapsed,
+    /// and jump to the walk screen if an alarm is ringing.
     private func refresh() async {
         await store.refreshFromSystem()
+        await store.downgradeRepeatingAlarmsIfNeeded()
         session.resumeIfAlarmRinging()
+    }
+
+    /// 3 free alarms, unlimited for Pro.
+    private func addAlarm() {
+        if !SubscriptionStore.shared.isPro && store.alarms.count >= AlarmStore.freeAlarmLimit {
+            showPaywall = true
+        } else {
+            sheetAlarm = .new(defaultSteps: settings.defaultSteps)
+        }
     }
 
     // MARK: - Pieces
 
-    private var header: some View {
-        ZStack {
-            Text("Alarms")
-                .font(.headline)
+    private func nextAlarmCard(_ text: String) -> some View {
+        HStack(spacing: Theme.Spacing.sm) {
+            Image(systemName: "alarm.fill")
+                .font(.title3)
                 .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 24)
-                .contentShape(Rectangle())
-                .onLongPressGesture { showTests = true }
-            HStack {
-                Button(isEditing ? "Done" : "Edit") { isEditing.toggle() }
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                HStack(spacing: 20) {
-                    Button { showPaywall = true } label: {
-                        Image(systemName: SubscriptionStore.shared.isPro ? "checkmark.seal.fill" : "sparkles")
-                            .font(.title3)
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                    Button { sheetAlarm = .new() } label: {
-                        Image(systemName: "plus")
-                            .font(.title2)
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                }
-            }
+            Text(text)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(Theme.Spacing.md)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.cardRadius).stroke(Theme.cardStroke, lineWidth: 1)
+        )
+        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.vertical, Theme.Spacing.sm)
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text)
-            .font(.subheadline.weight(.bold))
-            .foregroundStyle(Color(white: 0.55))
-            .padding(.vertical, 8)
+    private var emptyState: some View {
+        VStack(spacing: Theme.Spacing.md) {
+            Image(systemName: "alarm")
+                .font(.system(size: 52))
+                .foregroundStyle(Theme.textSecondary)
+            Text("No alarms yet")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text("Add an alarm you actually have to get up for.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+
+            Button(action: addAlarm) {
+                Text("Add Alarm")
+                    .font(.headline)
+                    .foregroundStyle(Theme.background)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Spacing.md)
+                    .background(Theme.textPrimary, in: Capsule())
+            }
+            .buttonStyle(.pressable)
+            .padding(.horizontal, Theme.Spacing.xl)
+            .padding(.top, Theme.Spacing.xs)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, Theme.Spacing.xl * 2)
+        .padding(.horizontal, Theme.Spacing.lg)
     }
 
     private func alarmRow(_ alarm: AlarmItem) -> some View {
-        HStack(spacing: 12) {
-            if isEditing {
-                Button {
-                    Task { await store.delete(alarm.id) }
-                } label: {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.red)
-                }
-            }
+        Button {
+            sheetAlarm = alarm
+        } label: {
+            HStack(spacing: Theme.Spacing.md) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(alarm.date, format: .dateTime.hour().minute())
+                        .font(.system(size: 46, weight: .light))
 
-            Button {
-                sheetAlarm = alarm
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .lastTextBaseline, spacing: 4) {
-                        Text(alarm.date, format: .dateTime.hour(.defaultDigits(amPM: .omitted)).minute())
-                            .font(.system(size: 54, weight: .light))
-                        Text(alarm.hour < 12 ? "AM" : "PM")
-                            .font(.system(size: 28, weight: .light))
+                    if !alarm.label.isEmpty {
+                        Text(alarm.label)
+                            .font(.subheadline.weight(.medium))
                     }
-                    Text(alarm.detail)
-                        .font(.caption)
-                        .foregroundStyle(Color(white: 0.6))
+
+                    HStack(spacing: Theme.Spacing.md) {
+                        Label {
+                            Text(alarm.stepsText)
+                        } icon: {
+                            Image("WalkingIcon")
+                                .renderingMode(.template)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 11, height: 15)
+                        }
+                        Label(alarm.repeatText, systemImage: "repeat")
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
                 }
-                .foregroundStyle(alarm.isOn ? Theme.textPrimary : Color(white: 0.55))
+                .foregroundStyle(alarm.isOn ? Theme.textPrimary : Theme.textDisabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            Toggle("", isOn: Binding(
-                get: { alarm.isOn },
-                set: { on in Task { await store.setEnabled(alarm.id, on) } }
-            ))
-            .labelsHidden()
-            .tint(Color(red: 0.204, green: 0.78, blue: 0.349)) // iOS green
+                Toggle("", isOn: Binding(
+                    get: { alarm.isOn },
+                    set: { on in
+                        Theme.tap()
+                        Task { await store.setEnabled(alarm.id, on) }
+                    }
+                ))
+                .labelsHidden()
+                .tint(Theme.neutralActive)
+            }
+            .opacity(alarm.isOn ? 1 : 0.55)
+            .padding(.vertical, Theme.Spacing.xs)
         }
-        .padding(.vertical, 10)
+        .buttonStyle(.pressable)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Double tap to edit")
     }
 
     private func note(_ text: String, isError: Bool = false) -> some View {
         Text(text)
-            .font(.caption)
-            .foregroundStyle(isError ? Theme.accent : Color(white: 0.6))
-            .padding(.vertical, 4)
+            .font(.footnote)
+            .foregroundStyle(isError ? Theme.accent : Theme.textSecondary)
     }
 }
 
-/// Developer test tools (long-press the "Alarms" title to open).
+/// Developer test tools (long-press the gear icon to open).
 private struct TestsSheet: View {
     var onClose: () -> Void
     var onDemo: () -> Void
@@ -200,7 +302,7 @@ private struct TestsSheet: View {
             Text("Test tools")
                 .font(.headline)
                 .foregroundStyle(Theme.textPrimary)
-                .padding(.bottom, 8)
+                .padding(.bottom, Theme.Spacing.sm)
 
             row("Try the Wake Up screen (simulated steps)", "figure.walk", onDemo)
             row("Ring a 15-step alarm in 15 seconds", "alarm") {
@@ -216,17 +318,20 @@ private struct TestsSheet: View {
                 }
             }
             row("End test", "xmark.circle") { liveActivity.endTest() }
+            row("Reset onboarding", "arrow.counterclockwise") {
+                AppSettings.shared.hasCompletedOnboarding = false
+                onClose()
+            }
 
             Text(liveActivity.lastError ?? liveActivity.statusMessage)
-                .font(.caption)
-                .foregroundStyle(Color(white: 0.55))
-                .padding(.top, 8)
+                .font(.footnote)
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.top, Theme.Spacing.sm)
             Spacer(minLength: 0)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
     }
 
     private func row(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
@@ -237,6 +342,7 @@ private struct TestsSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 9)
         }
+        .buttonStyle(.pressable)
     }
 }
 

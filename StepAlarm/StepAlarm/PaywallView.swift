@@ -8,6 +8,8 @@ struct PaywallView: View {
 
     private var store = SubscriptionStore.shared
     @State private var selectedID = SubscriptionStore.yearlyID
+    @State private var showTerms = false
+    @State private var showPrivacy = false
 
     init(onClose: @escaping () -> Void) {
         self.onClose = onClose
@@ -19,10 +21,11 @@ struct PaywallView: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.textPrimary)
                         .frame(width: 40, height: 40)
-                        .background(Color(white: 0.22), in: Circle())
+                        .background(Color(.tertiarySystemFill), in: Circle())
                 }
+                .buttonStyle(.pressable)
                 Spacer()
             }
             .padding(.top, 8)
@@ -31,17 +34,17 @@ struct PaywallView: View {
                 VStack(spacing: 24) {
                     Image(systemName: "figure.walk.circle.fill")
                         .font(.system(size: 72))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Theme.textPrimary)
                         .padding(.top, 8)
 
-                    Text(store.isPro ? "You're Pro" : "Step Alarm Pro")
+                    Text(store.isPro ? "You're Alarm7 Pro" : "Alarm7 Pro")
                         .font(.system(size: 34, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
 
                     VStack(alignment: .leading, spacing: 14) {
-                        feature("Unlimited step alarms")
-                        feature("Custom step goals up to 30")
-                        feature("Weekly repeat schedules")
+                        feature("Unlimited alarms (3 free)")
+                        feature("Step goals up to 30 (15 free)")
+                        feature("Repeat schedules — daily, weekdays, custom")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -73,13 +76,19 @@ struct PaywallView: View {
                         Text(message)
                             .font(.caption)
                             .multilineTextAlignment(.center)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.accent)
                     }
                 }
                 .padding(.bottom, 16)
             }
 
             if !store.isPro {
+                Text("Auto-renews until cancelled. Cancel anytime in Settings.")
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.bottom, 8)
+
                 Button {
                     guard let product = selectedProduct else {
                         Task { await store.loadProducts() }
@@ -89,38 +98,54 @@ struct PaywallView: View {
                 } label: {
                     Group {
                         if store.isBusy {
-                            ProgressView().tint(.black)
+                            ProgressView().tint(Theme.background)
                         } else {
                             Text(selectedProduct == nil ? "Retry loading plans" : "Continue")
                                 .font(.headline)
                         }
                     }
-                    .foregroundStyle(.black)
+                    .foregroundStyle(Theme.background)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .background(Color.white, in: Capsule())
+                    .background(Theme.textPrimary, in: Capsule())
                 }
+                .buttonStyle(.pressable)
                 .disabled(store.isBusy)
 
                 Button("Restore Purchases") { Task { await store.restore() } }
+                    .buttonStyle(.pressable)
                     .font(.footnote)
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 12)
 
+                HStack(spacing: 6) {
+                    Button("Terms of Use") { showTerms = true }
+                    Text("·")
+                    Button("Privacy Policy") { showPrivacy = true }
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.top, 8)
+
                 Text("Payment is charged to your Apple ID. The subscription renews automatically unless cancelled at least 24 hours before the end of the current period. Manage or cancel any time in Settings > Apple ID > Subscriptions.")
                     .font(.caption2)
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(Color(white: 0.5))
+                    .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 8)
             }
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
         .background(Theme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
         .task { await store.start() }
         .onChange(of: store.isPro) { _, isPro in
             if isPro { onClose() }
+        }
+        .sheet(isPresented: $showTerms) {
+            LegalDocumentView(title: "Terms of Use", content: LegalText.terms) { showTerms = false }
+        }
+        .sheet(isPresented: $showPrivacy) {
+            LegalDocumentView(title: "Privacy Policy", content: LegalText.privacy) { showPrivacy = false }
         }
     }
 
@@ -143,7 +168,7 @@ struct PaywallView: View {
         Label {
             Text(text).foregroundStyle(Theme.textPrimary)
         } icon: {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.white)
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.textPrimary)
         }
         .font(.body)
     }
@@ -151,6 +176,7 @@ struct PaywallView: View {
     private func planCard(id: String, title: String, price: String, period: String, badge: String?) -> some View {
         let selected = selectedID == id
         return Button {
+            Theme.tap()
             selectedID = id
         } label: {
             HStack {
@@ -175,16 +201,17 @@ struct PaywallView: View {
                 Spacer()
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.title2)
-                    .foregroundStyle(selected ? Color.white : Color(white: 0.4))
+                    .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
             }
             .padding(16)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 20))
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
             .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(selected ? Color.white : Color.clear, lineWidth: 2)
+                RoundedRectangle(cornerRadius: Theme.cardRadius)
+                    .stroke(selected ? Theme.textPrimary : Theme.cardStroke, lineWidth: selected ? 2 : 1)
             )
+            .animation(.spring(duration: 0.3, bounce: 0.2), value: selected)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
     }
 }
 

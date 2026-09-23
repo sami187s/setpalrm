@@ -23,7 +23,7 @@ these files in.
 2. Set the deployment target to **iOS 26.0** (project settings → General →
    Minimum Deployments).
 3. Delete the auto-generated `ContentView.swift` and `StepAlarmApp.swift`
-   Xcode created, then drag in the files from this folder's `StepAlarm/`
+   Xcode created, then drag in every file from this folder's `StepAlarm/`
    subdirectory:
    - `StepAlarmApp.swift`
    - `ContentView.swift`
@@ -33,15 +33,52 @@ these files in.
    - `LiveActivityController.swift`
    - `Theme.swift`, `AlarmStore.swift`, `WalkSession.swift`,
      `WakeUpView.swift`, `AddAlarmView.swift`
-4. Add the required permission strings: target → **Info** tab:
-   - `NSAlarmKitUsageDescription` → e.g. "Step Alarm needs alarm access
-     to wake you up." (Key name should be verified in Xcode's autocomplete —
-     it may suggest the exact key if you start typing "Alarm".)
-   - `NSMotionUsageDescription` → e.g. "Step Alarm counts your steps to turn
-     the alarm off." (needed for the pedometer)
+   - `PaywallView.swift`, `SubscriptionStore.swift`
+   - `AppSettings.swift`, `SettingsView.swift`, `Toast.swift`
+   - `LegalDocumentView.swift`
+
+4. Permission strings — an `Info.plist` with the three required keys is
+   already included in this folder (`StepAlarm/Info.plist`). Easiest path:
+   drag it in alongside the other files, then in the target's **Build
+   Settings** search "Info.plist" and set:
+   - `Generate Info.plist File` → `No`
+   - `Info.plist File` → `StepAlarm/Info.plist` (the path to the file you
+     just added)
+
+   If you'd rather keep Xcode's auto-generated Info.plist instead, skip
+   dragging the file in and add these three keys by hand in the target →
+   **Info** tab:
+   - `NSAlarmKitUsageDescription` → "Step Alarm needs alarm access to wake
+     you up." (verify the exact key via Xcode's autocomplete — start typing
+     "Alarm")
+   - `NSMotionUsageDescription` → "Step Alarm counts your steps to turn the
+     alarm off."
+   - `NSSupportsLiveActivities` → `YES`
+
 5. **Signing & Capabilities** tab → select your existing Apple Developer
    team. Do not create a new identifier — use what's already provisioned.
-6. Build target: your physical iPhone (not simulator — AlarmKit and
+   While here, click **+ Capability** and search "Alarm" — if AlarmKit
+   ships as an explicit capability (adds its own entitlement) rather than
+   just an Info.plist key, add it now. I can't confirm which from this
+   environment; Xcode's capability list is the ground truth.
+6. StoreKit testing (for the paywall) — `StepAlarm/StepAlarm.storekit` is
+   included with both products (`alarm7.pro.monthly` $4.99,
+   `alarm7.pro.yearly` $29.99) already defined, so the paywall can load
+   real `Product` objects and complete test purchases without any App
+   Store Connect setup. Drag it in, then **Product → Scheme → Edit
+   Scheme → Run → Options → StoreKit Configuration** → select it. (Real
+   App Store Connect products with these same IDs still need to be created
+   before you can ship/TestFlight — the local file is only for on-device
+   testing.)
+7. App icon and Wake Up screen walking icon — both are already wired up as
+   a real asset catalog at `StepAlarm/StepAlarm/Assets.xcassets/`
+   (`AppIcon.appiconset` with the 1024×1024 marketing icon, `WalkingIcon.imageset`
+   already set to **Render As: Template Image** so `.foregroundStyle` tints
+   it in code). Just drag the whole `Assets.xcassets` folder in alongside
+   the other files — no manual "New Image Set" steps needed. If Xcode's
+   own template project already generated its own `Assets.xcassets`,
+   delete that one first so there's only one in the target.
+9. Build target: your physical iPhone (not simulator — AlarmKit and
    CMPedometer don't work there). Run.
 
 ## Setup — Live Activity validation (added per the design spec)
@@ -163,26 +200,56 @@ it by reading documentation alone.
 
 ## How the app works now (walk to dismiss)
 
-1. **+** adds an alarm: time, steps to dismiss (1–30), repeat days. Alarms are
-   saved; the toggle schedules/cancels the real AlarmKit alarm; tap a row to
-   edit; **Edit** shows delete buttons.
-2. When it rings, the system alert has **Stop** and **Walk**.
+1. **+** (or the empty-state button) adds an alarm: time (follows your
+   device's 12h/24h setting), steps to dismiss, repeat days, label, sound,
+   vibration, snooze — laid out as a grouped list under the time wheel. The
+   toggle schedules/cancels the real AlarmKit alarm; tap a row to edit;
+   swipe a row left to delete.
+2. **Free tier:** up to 3 alarms, capped at 15 steps, no repeat (every free
+   alarm is one-time — it turns itself off after ringing). The Repeat
+   section, and steps above 15, show a lock icon and open the paywall.
+3. **Pro:** unlimited alarms, up to 30 steps, full repeat (every day,
+   weekdays, custom days). If a Pro subscription lapses, any repeating
+   alarms quietly become one-time instead of being deleted.
+4. When it rings, the system alert has **Stop** and **Walk**.
    - **Walk** opens the app on the Wake Up screen. Real steps are counted
-     (CMPedometer); reaching the goal silences the alarm.
-   - **Stop** silences it, but it **rings again 20 seconds later** until the
-     steps are done.
-3. If the app is opened while an alarm is ringing, it jumps straight to the
+     (CMPedometer); reaching the goal silences the alarm, with a "Good
+     morning" screen after.
+   - **Stop** silences it, then (unless that alarm's Snooze is off) it
+     **rings again 20 seconds later** until the steps are done.
+   - A "Can't walk? Hold to skip" control on the Wake Up screen lets someone
+     dismiss the alarm without walking if held for 10 seconds — an
+     accessibility/emergency out, not a way to casually skip.
+5. If the app is opened while an alarm is ringing, it jumps straight to the
    Wake Up screen.
+6. After a **free-tier** one-time alarm is dismissed, the "Good morning"
+   screen offers "Set again for tomorrow at [time]?" with a one-tap Yes, plus
+   a small "Make it repeat automatically with Pro" link to the paywall.
+7. Settings (gear icon): default step goal, vibration, snooze-by-default,
+   permission status with a link to the Settings app, Pro/restore, support
+   and legal links.
 
 ### Quick test plan (real iPhone)
 
-1. Tests → "Try the Wake Up screen" — steps count up by themselves, the alarm
-   closes at 15.
+1. Long-press the **gear icon** → Tests → "Try the Wake Up screen" — steps
+   count up by themselves, ends on "Good morning".
 2. Tests → "Ring a 15-step alarm in 15 seconds", lock the phone.
-3. When it rings: tap **Stop** → it should ring again after ~20s.
-4. Tap **Walk**, walk 15 steps → alarm stops, screen says "You're up!".
-5. Add a real alarm 2 minutes ahead with 10 steps and repeat days; toggle it
-   off/on; delete it with Edit.
+3. When it rings: tap **Stop** → it should ring again after ~20s (unless
+   you turned Snooze off for that alarm, in which case it should stay off).
+4. Tap **Walk**, walk the required steps → alarm stops, "Good morning"
+   screen appears; if this was a free one-time alarm, the "Set again for
+   tomorrow?" offer should also appear.
+5. Hold "Can't walk? Hold to skip" for the full 10 seconds mid-ring —
+   confirm it dismisses the alarm.
+6. Add a 4th alarm on the free tier — confirm the paywall opens instead.
+   Try setting steps above 15, and try tapping Repeat — both should show a
+   lock and open the paywall on the free tier.
+7. Add a real alarm 2 minutes ahead; toggle it off/on; swipe to delete it.
+8. Try both light and dark mode (Settings app → Developer / Display &
+   Brightness) — every screen should adapt correctly now, not just dark.
 
 Not built: the Lock Screen Live Activity is still only the Test A/B demo —
-it does not show your real step count during an alarm.
+it does not show your real step count during an alarm. Onboarding screens
+and the full paywall visual redesign (headline, free trial, fixed bottom
+button) from the later polish pass were also not built — the paywall works
+and enforces the real limits, but its layout is from an earlier pass.

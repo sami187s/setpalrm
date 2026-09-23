@@ -2,10 +2,12 @@ import AppIntents
 import AlarmKit
 
 /// Runs in-process (no UI) when the alarm's system Stop button is tapped.
-/// Stopping without walking isn't allowed to "win": the alarm is silenced
-/// now and rings again after `AlarmScheduler.reRingDelay` seconds. Walking
-/// the steps is what really ends it — it
-/// silences the alarm directly and never goes through this intent.
+/// Stopping without walking isn't allowed to "win" by default: the alarm is
+/// silenced now and rings again after `AlarmScheduler.reRingDelay` seconds
+/// — unless that alarm has Snooze turned off, in which case Stop silences it
+/// for good (a stricter, no-snooze alarm). Walking the steps is what really
+/// ends it either way — that silences the alarm directly and never goes
+/// through this intent.
 ///
 /// NOTE: exact protocol requirements for AlarmKit's button intents
 /// (`LiveActivityIntent`) come from Apple's WWDC25 AlarmKit session and
@@ -26,7 +28,16 @@ struct StopAlarmIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         if let id = UUID(uuidString: alarmIDString) {
             try? await AlarmManager.shared.stop(id: id)
-            await AlarmScheduler.shared.scheduleReRing(steps: AlarmGoals.goal(for: id) ?? 15)
+            let settings = AlarmGoals.settings(for: id)
+            if settings?.snoozeEnabled ?? true {
+                await AlarmScheduler.shared.scheduleReRing(
+                    steps: settings?.stepGoal ?? 15,
+                    label: settings?.label ?? "",
+                    vibrationEnabled: settings?.vibrationEnabled ?? true,
+                    hour: settings?.hour ?? 7,
+                    minute: settings?.minute ?? 0
+                )
+            }
         }
         return .result()
     }

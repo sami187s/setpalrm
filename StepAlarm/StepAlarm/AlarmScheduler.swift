@@ -1,31 +1,59 @@
 import AlarmKit
 import SwiftUI
 
-/// Remembers each scheduled alarm's step goal (AlarmKit can't hand custom
-/// data back to us later) and which "re-ring" alarms are pending.
+/// Everything AlarmKit can't hand back to us later when an alarm fires: its
+/// step goal, label, and whether it's allowed to re-ring after Stop.
+struct AlarmRingSettings: Codable {
+    var stepGoal: Int
+    var label: String
+    var snoozeEnabled: Bool
+    var vibrationEnabled: Bool
+    var hour: Int
+    var minute: Int
+}
+
+/// Remembers each scheduled alarm's ring settings and which "re-ring"
+/// alarms are pending.
 enum AlarmGoals {
-    private static let goalsKey = "stepalarm.goals"
+    private static let settingsKey = "stepalarm.ringSettings"
     private static let reRingKey = "stepalarm.reRings"
 
-    static func set(_ goal: Int, for id: UUID) {
-        var all = UserDefaults.standard.dictionary(forKey: goalsKey) as? [String: Int] ?? [:]
-        all[id.uuidString] = goal
-        UserDefaults.standard.set(all, forKey: goalsKey)
+    static func set(_ settings: AlarmRingSettings, for id: UUID) {
+        var all = load()
+        all[id.uuidString] = settings
+        save(all)
+    }
+
+    static func settings(for id: UUID) -> AlarmRingSettings? {
+        load()[id.uuidString]
     }
 
     static func goal(for id: UUID) -> Int? {
-        (UserDefaults.standard.dictionary(forKey: goalsKey) as? [String: Int])?[id.uuidString]
+        settings(for: id)?.stepGoal
     }
 
     static var reRingIDs: [UUID] {
         get { (UserDefaults.standard.stringArray(forKey: reRingKey) ?? []).compactMap(UUID.init) }
         set { UserDefaults.standard.set(newValue.map(\.uuidString), forKey: reRingKey) }
     }
+
+    private static func load() -> [String: AlarmRingSettings] {
+        guard let data = UserDefaults.standard.data(forKey: settingsKey),
+              let decoded = try? JSONDecoder().decode([String: AlarmRingSettings].self, from: data)
+        else { return [:] }
+        return decoded
+    }
+
+    private static func save(_ all: [String: AlarmRingSettings]) {
+        if let data = try? JSONEncoder().encode(all) {
+            UserDefaults.standard.set(data, forKey: settingsKey)
+        }
+    }
 }
 
 /// Wrapper around AlarmManager: authorization, scheduling, cancelling, and
 /// the "re-ring" that fires if someone taps the system Stop button without
-/// doing their steps.
+/// doing their steps (unless that alarm has snooze turned off).
 ///
 /// NOTE: written without a macOS/Xcode toolchain to compile against the real
 /// AlarmKit SDK. If Xcode disagrees with a name here (e.g. the
@@ -71,31 +99,52 @@ final class AlarmScheduler {
         let repeats: Alarm.Schedule.Relative.Recurrence =
             item.days.isEmpty ? .never : .weekly(item.days.sorted().map { Self.weekdays[$0] })
         let schedule = Alarm.Schedule.relative(.init(time: time, repeats: repeats))
-        await submit(id: item.id, schedule: schedule, steps: item.steps)
+        await submit(
+            id: item.id, schedule: schedule, steps: item.steps, label: item.label,
+            snoozeEnabled: item.snoozeEnabled, vibrationEnabled: item.vibrationEnabled,
+            hour: item.hour, minute: item.minute
+        )
     }
 
     /// Test alarm: fires N seconds from now with a 15-step goal.
     func scheduleTestAlarm(secondsFromNow: TimeInterval = 120) async {
         let fire = Date().addingTimeInterval(secondsFromNow)
-        await submit(id: UUID(), schedule: .fixed(fire), steps: 15)
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: fire)
+        await submit(
+            id: UUID(), schedule: .fixed(fire), steps: 15, label: "", snoozeEnabled: true, vibrationEnabled: true,
+            hour: comps.hour ?? 0, minute: comps.minute ?? 0
+        )
     }
 
     /// Rings again shortly after the system Stop button was tapped.
-    func scheduleReRing(steps: Int) async {
+    func scheduleReRing(steps: Int, label: String, vibrationEnabled: Bool, hour: Int, minute: Int) async {
         let id = UUID()
         AlarmGoals.reRingIDs.append(id)
         let fire = Date().addingTimeInterval(Self.reRingDelay)
-        await submit(id: id, schedule: .fixed(fire), steps: steps)
+        await submit(
+            id: id, schedule: .fixed(fire), steps: steps, label: label, snoozeEnabled: true,
+            vibrationEnabled: vibrationEnabled, hour: hour, minute: minute
+        )
     }
 
-    private func submit(id: UUID, schedule: Alarm.Schedule, steps: Int) async {
-        AlarmGoals.set(steps, for: id)
+    private func submit(
+        id: UUID, schedule: Alarm.Schedule, steps: Int, label: String, snoozeEnabled: Bool, vibrationEnabled: Bool,
+        hour: Int, minute: Int
+    ) async {
+        AlarmGoals.set(
+            AlarmRingSettings(
+                stepGoal: steps, label: label, snoozeEnabled: snoozeEnabled, vibrationEnabled: vibrationEnabled,
+                hour: hour, minute: minute
+            ),
+            for: id
+        )
 
         let stopButton = AlarmButton(text: "Stop", textColor: .white, systemImageName: "stop.fill")
         let walkButton = AlarmButton(text: "Walk", textColor: .white, systemImageName: "figure.walk")
 
+        let title = label.isEmpty ? "Wake up! Walk \(steps) steps" : "\(label) — walk \(steps) steps"
         let alert = AlarmPresentation.Alert(
-            title: "Wake up! Walk \(steps) steps",
+            title: title,
             stopButton: stopButton,
             secondaryButton: walkButton,
             secondaryButtonBehavior: .custom
